@@ -1,0 +1,4 @@
+*.rest
+*.json
+*.exe
+.env
