@@ -271,7 +271,7 @@ func openYTChannels() [][]string {
 
 }
 
-func checkLive() {
+func checkYoutubeLive() {
 	channels := openYTChannels()
 
 	var wg sync.WaitGroup
@@ -447,6 +447,8 @@ func watchTwitchStream() {
 
 }
 
+func checkBoth()
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -455,17 +457,19 @@ func main() {
 
 	var choice int
 	for choice != 4 {
-		fmt.Println("1.Add Channel.\n2.Check who is live.\n3.Watch Stream\n4.Exit")
+		fmt.Println("1.Check Youtube and Twitch.\n2.Check Youtube.\n3.Check Twitch.\n4.Watch stream.\n5.Exit")
 		fmt.Scanln(&choice)
 
 		switch choice {
 		case 1:
-			
+			checkBoth()
 		case 2:
-			checkTwitchLive()
+			checkYoutubeLive()
 		case 3:
-			watchTwitchStream()
+			checkTwitchLive()
 		case 4:
+			watchTwitchStream()
+		case 5:
 			os.Exit(0)
 		}
 
