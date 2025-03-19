@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/joho/godotenv"
 	"google.golang.org/api/option"
@@ -27,16 +29,56 @@ type YouTubeResponse struct {
 	} `json:"items"`
 }
 
+type twitchChannels struct {
+	Data []twitchChannel `json:"data"`
+}
+
+type twitchTimeStruct struct {
+	time.Time
+}
+
+type twitchChannel struct {
+	BroadcasterLogin string `json:"broadcaster_login"`
+	DisplayName string `json:"display_name"`
+	GameName string `json:"game_name"`
+	IsLive bool `json:"is_live"`
+	Title string `json:"title"`
+	StreamStartTime *twitchTimeStruct `json:"started_at"`
+}
+
+func (t *twitchTimeStruct) UnmarshalJSON(b []byte) error  {
+	str := string(b)
+
+	if str == "null" {
+		return nil
+	}
+
+	str = str[1: len(str) - 1]
+
+	if str == "" {
+		return nil
+	}
+
+	parsedTime, err := time.Parse(time.RFC3339, str)
+	if err != nil{
+		return err
+	}
+
+	t.Time = parsedTime
+	return nil
+}
+
 func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sync.Mutex, results chan <- map[string]string) {
 	defer wg.Done()
 	mu.Lock()
 	defer mu.Unlock()
-	apiKey := os.Getenv("apiKey")
+	ytApiKey := os.Getenv("ytApiKey")
 
 	ctx := context.Background()
-	service, err := youtube.NewService(ctx, option.WithAPIKey(apiKey))
+	service, err := youtube.NewService(ctx, option.WithAPIKey(ytApiKey))
 	if err != nil {
-		log.Fatalf("Error creating YouTube service: %v", err)
+		// log.Fatalf("Error creating YouTube service: %v", err)
+		log.Printf("Error creating YouTube service: %v", err)
 	}
 
 	// Search for live videos from a specific channel
@@ -70,6 +112,18 @@ func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sy
 
 }
 
+func clearConsole() {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/c", "cls")
+	} else {
+		cmd  = exec.Command("clear")
+	}
+
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
 func watchChannelMap(channelMap map[string]string) {
 	var cname string
 	scanner := bufio.NewScanner(os.Stdin)
@@ -81,6 +135,9 @@ func watchChannelMap(channelMap map[string]string) {
 
 	cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + channelMap[cname])
 	cmd.Start()
+	clearConsole()
+
+	fmt.Println("MPV Loading...")
 }
 
 func resolveChannelIDtoStreamLink(ChannelName string, channelID string) string {
@@ -127,7 +184,9 @@ func watchChannelArray(channels [][]string) {
 
 	cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + stream_link)
 	cmd.Start()
-	
+	clearConsole()
+
+	fmt.Println("MPV Loading...")
 }
 
 func appendCSV(ChannelName string, cID string) {
@@ -156,7 +215,7 @@ func appendCSV(ChannelName string, cID string) {
 
 func addChannel() ([]string, error){
 	var cname string
-	apiKey := os.Getenv("apiKey")
+	ytApiKey := os.Getenv("ytApiKey")
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("Add Channel: ")
 
@@ -169,7 +228,7 @@ func addChannel() ([]string, error){
 		"part": {"snippet"},
 		"q": {cname},
 		"type": {"channel"},
-		"key" : {apiKey},
+		"key" : {ytApiKey},
 	}.Encode()
 
 	resp, err := http.Get(apiURL)
@@ -192,7 +251,7 @@ func addChannel() ([]string, error){
 	return []string{}, fmt.Errorf("channel not found")
 }
 
-func openChannels() [][]string {
+func openYTChannels() [][]string {
 	file, err := os.Open("channels.csv")
 
 	if err != nil {
@@ -213,7 +272,7 @@ func openChannels() [][]string {
 }
 
 func checkLive() {
-	channels := openChannels()
+	channels := openYTChannels()
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -271,14 +330,179 @@ func watchStream() {
 	watchChannelArray(records)
 }
 
+func openTwitchChannels() [][]string {
+	file, err := os.Open("twitchchannels.csv")
+
+	if err != nil {
+		log.Fatal("Couldn't open file", err)
+	}
+
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatal("Couldn't read the entries", err)
+	}
+
+	// for _, record := range records {
+	// 	fmt.Print(record[0])
+	// }
+	return records
+
+}
+
+func parseTwitchChannelData(ChannelName string, unparsedData []byte) (twitchChannel, bool) {
+	var replyDataField twitchChannels
+
+	err := json.Unmarshal(unparsedData, &replyDataField)
+	if err != nil {
+		log.Fatal("Error in unmarshalling json data", err)
+	}
+
+	for _, channel := range replyDataField.Data {
+		if channel.BroadcasterLogin == ChannelName {
+			return channel, true
+		}
+	}
+
+	var tc twitchChannel
+
+	return tc, false
+}
+
+func makeTwitchCall(ChannelName string, wg *sync.WaitGroup, mu *sync.Mutex, results chan <- twitchChannel)   {
+	defer wg.Done()
+	endpoint := "https://api.twitch.tv/helix/search/channels?query=" + ChannelName
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		log.Fatal("Something went wrong in creating request", err)
+	}
+
+	req.Header.Set("Client-ID", os.Getenv("client_id"))
+	req.Header.Set("Authorization", "Bearer " + os.Getenv("oauth_token"))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal("Something went wrong in sending the request to twitch", err) 
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal("Couldn't read the response body for some reason", err)
+	}
+
+	channelJSON, success := parseTwitchChannelData(ChannelName, body)
+	if !success {
+		return
+	}
+
+	results <- channelJSON
+}
+
+func checkTwitchLive() {
+	channels := openTwitchChannels()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := make(chan twitchChannel, len(channels))
+
+	for _, pair := range channels {
+		wg.Add(1)
+		go makeTwitchCall(pair[0], &wg, &mu, results)
+	}
+	
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for channel := range results {
+		if channel.IsLive {
+			fmt.Printf("%s is live! Title: %s\n", channel.BroadcasterLogin, channel.Title)
+		}
+	}
+
+}
+
+func watchTwitchStream() {
+	var cname string
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Print("Who would you like to watch: ")
+
+	if scanner.Scan() {
+		cname = scanner.Text()
+	}
+
+	cmd := exec.Command("mpv", "https://twitch.tv/" + cname)
+	cmd.Start()
+	clearConsole()
+
+	fmt.Println("MPV Loading...")
+
+
+}
 
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading API key. Check .env file")
+		log.Fatal("Error in loading env. ", err)
 	}
-	// apiKey := os.Getenv("apiKey")
-	// fmt.Printf("%s\n", apiKey)
+
+	var choice int
+	for choice != 4 {
+		fmt.Println("1.Add Channel.\n2.Check who is live.\n3.Watch Stream\n4.Exit")
+		fmt.Scanln(&choice)
+
+		switch choice {
+		case 1:
+			
+		case 2:
+			checkTwitchLive()
+		case 3:
+			watchTwitchStream()
+		case 4:
+			os.Exit(0)
+		}
+
+	}
+	// var wg sync.WaitGroup
+	// wg.Add(1)
+	// err := godotenv.Load()
+	// if err != nil {
+	// 	log.Fatal("Error loading API key. Check .env file")
+	// }
+
+	// reply := testTwitch(&wg)
+	// wg.Wait()
+
+	// // fmt.Print(string(reply))
+
+	// var replyDataField twitchChannels
+
+	// err = json.Unmarshal(reply, &replyDataField)
+	// if err != nil {
+	// 	log.Fatal("Error in unmarshalling json data", err)
+	// }
+
+	// // fmt.Print(replyDataField.Data)
+
+	
+	// for _, channel := range replyDataField.Data {
+	// 	if channel.BroadcasterLogin == "k4sen" {
+	// 		fmt.Print(channel)
+	// 	}
+	// }
+
+
+
+
+	// ytApiKey := os.Getenv("ytApiKey")
+	// fmt.Printf("%s\n", ytApiKey)
 
 	// channels := openChannels()
 	// for _, pair := range channels {
@@ -290,23 +514,23 @@ func main() {
 
 	
 
-	var choice int
-	for choice != 4 {
-		fmt.Println("1.Add Channel.\n2.Check who is live.\n3.Watch Stream\n4.Exit")
-		fmt.Scanln(&choice)
+	// var choice int
+	// for choice != 4 {
+	// 	fmt.Println("1.Add Channel.\n2.Check who is live.\n3.Watch Stream\n4.Exit")
+	// 	fmt.Scanln(&choice)
 
-		switch choice {
-		case 1:
-			addChannel()
-		case 2:
-			checkLive()
-		case 3:
-			watchStream()
-		case 4:
-			os.Exit(0)
-		}
+	// 	switch choice {
+	// 	case 1:
+	// 		addChannel()
+	// 	case 2:
+	// 		checkLive()
+	// 	case 3:
+	// 		watchStream()
+	// 	case 4:
+	// 		os.Exit(0)
+	// 	}
 
-	}
+	// }
 	
 	
 
