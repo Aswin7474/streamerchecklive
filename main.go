@@ -27,8 +27,10 @@ type YouTubeResponse struct {
 	} `json:"items"`
 }
 
-func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, results chan <- map[string]string) {
+func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sync.Mutex, results chan <- map[string]string) {
 	defer wg.Done()
+	mu.Lock()
+	defer mu.Unlock()
 	apiKey := os.Getenv("apiKey")
 
 	ctx := context.Background()
@@ -81,6 +83,25 @@ func watchChannelMap(channelMap map[string]string) {
 	cmd.Start()
 }
 
+func resolveChannelIDtoStreamLink(ChannelName string, channelID string) string {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	results := make(chan map[string]string, 1)
+
+	wg.Add(1)
+	go makeYTCall(ChannelName, channelID, &wg, &mu, results)
+	
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	result := <-results
+
+	return result[ChannelName]
+	
+}
+
 func watchChannelArray(channels [][]string) {
 	var cname string
 	scanner := bufio.NewScanner(os.Stdin)
@@ -98,8 +119,15 @@ func watchChannelArray(channels [][]string) {
 		}
 	}
 
-	cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + id)
+	stream_link := resolveChannelIDtoStreamLink(cname, id)
+
+	if len(stream_link) == 0 {
+		log.Fatal("Streamer is not live\nExitting Program!")
+	}
+
+	cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + stream_link)
 	cmd.Start()
+	
 }
 
 func appendCSV(ChannelName string, cID string) {
@@ -158,8 +186,6 @@ func addChannel() ([]string, error){
 	}
 
 	if len(ytResponse.Items) > 0 {
-		fmt.Println(ytResponse.Items[0].ID.ChannelID)
-		// return []string{cname,  ytResponse.Items[0].ID.ChannelID}, nil
 		appendCSV(cname,  ytResponse.Items[0].ID.ChannelID)
 	}
 
@@ -190,11 +216,12 @@ func checkLive() {
 	channels := openChannels()
 
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	results := make(chan map[string]string, len(channels))
 
 	for _, pair := range channels {
 		wg.Add(1)
-		go makeYTCall(pair[0], pair[1], &wg, results)
+		go makeYTCall(pair[0], pair[1], &wg, &mu, results)
 	}
 	
 	go func() {
@@ -206,6 +233,7 @@ func checkLive() {
 
 	for result := range results {
 		for key, value := range result {
+			fmt.Printf("%s = %s\n", finalResults[key], value)
 			finalResults[key] = value
 		}
 	}
@@ -249,6 +277,18 @@ func main() {
 	if err != nil {
 		log.Fatal("Error loading API key. Check .env file")
 	}
+	// apiKey := os.Getenv("apiKey")
+	// fmt.Printf("%s\n", apiKey)
+
+	// channels := openChannels()
+	// for _, pair := range channels {
+	// 	fmt.Printf("%s, %s\n", pair[0], pair[1])
+	// }
+
+	// cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=uHZ3Qy2taIk")
+	// cmd.Start()
+
+	
 
 	var choice int
 	for choice != 4 {
