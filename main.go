@@ -96,9 +96,9 @@ func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sy
 	// Print live video results
 	
 	for _, item := range response.Items {
-		fmt.Println("Live Videos from the Channel:")
-		fmt.Printf("Channel: %s, Title: %s, URL: https://www.youtube.com/watch?v=%s\n",
-			ChannelName, item.Snippet.Title, item.Id.VideoId)
+		// fmt.Println("Live Videos from the Channel:")
+		// fmt.Printf("Channel: %s, Title: %s, URL: https://www.youtube.com/watch?v=%s\n",
+		// 	ChannelName, item.Snippet.Title, item.Id.VideoId)
 			 results <- map[string]string{ChannelName: item.Id.VideoId}
 			 return
 
@@ -271,8 +271,8 @@ func openYTChannels() [][]string {
 
 }
 
-func checkYoutubeLive() {
-	channels := openYTChannels()
+func checkYoutubeLive(channels [][]string) map[string]string{
+	// channels := openYTChannels()
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -280,7 +280,7 @@ func checkYoutubeLive() {
 
 	for _, pair := range channels {
 		wg.Add(1)
-		go makeYTCall(pair[0], pair[1], &wg, &mu, results)
+		go makeYTCall(pair[0], pair[2], &wg, &mu, results)
 	}
 	
 	go func() {
@@ -289,21 +289,23 @@ func checkYoutubeLive() {
 	}()
 
 	finalResults := make(map[string]string)
-
+	
 	for result := range results {
 		for key, value := range result {
-			fmt.Printf("%s = %s\n", finalResults[key], value)
+			// fmt.Printf("%s = %s\n", finalResults[key], value)
 			finalResults[key] = value
 		}
 	}
 
-	fmt.Println("Available Channels:")
+	return finalResults
 
-	for key, _ := range finalResults {
-		fmt.Println(key)
-	}
+	// fmt.Println("Available Channels:")
 
-	watchChannelMap(finalResults)
+	// for key, _ := range finalResults {
+	// 	fmt.Println(key)
+	// }
+
+	// watchChannelMap(finalResults)
 
 }
 
@@ -404,16 +406,14 @@ func makeTwitchCall(ChannelName string, wg *sync.WaitGroup, mu *sync.Mutex, resu
 	results <- channelJSON
 }
 
-func checkTwitchLive() {
-	channels := openTwitchChannels()
-
+func checkTwitchLive(channels []string) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	results := make(chan twitchChannel, len(channels))
 
-	for _, pair := range channels {
+	for _, channel := range channels {
 		wg.Add(1)
-		go makeTwitchCall(pair[0], &wg, &mu, results)
+		go makeTwitchCall(channel, &wg, &mu, results)
 	}
 	
 	go func() {
@@ -447,7 +447,73 @@ func watchTwitchStream() {
 
 }
 
-func checkBoth()
+func openMPV(platform string, streamURL string) {
+	switch platform {
+	case "youtube":
+		cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + streamURL)
+		cmd.Start()
+		clearConsole()
+		fmt.Println("MPV Loading...")
+	case "twitch":
+		cmd := exec.Command("mpv", "https://twitch.tv/" + streamURL)
+		cmd.Start()
+		clearConsole()
+		fmt.Println("MPV Loading...")
+	}
+}
+
+func checkBoth() {
+	file, err := os.Open("channels.csv")
+
+	if err != nil {
+		log.Fatal("Couldn't open file", err)
+	}
+
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatal("Couldn't read the entries", err)
+	}
+
+	var ytDoubleArray [][]string
+	var twitchArray []string
+
+	for _, channel := range records {
+		if channel[2] == "" {
+			twitchArray = append(twitchArray, channel[0])
+		} else {
+			ytDoubleArray = append(ytDoubleArray, channel)
+		}
+	}
+
+	currentlyLiveYTChannels := checkYoutubeLive(ytDoubleArray)
+	fmt.Println("On Twitch: ")
+	checkTwitchLive(twitchArray)
+
+	fmt.Println("On Youtube: ")
+	for key, value := range currentlyLiveYTChannels {
+		fmt.Printf("%s = %s\n", key, value)
+	}
+
+	fmt.Println("Who would you like to watch: ")
+	var cname string
+	scanner := bufio.NewScanner(os.Stdin)
+
+	if scanner.Scan() {
+		cname = scanner.Text()
+	}
+
+	if streamURL, ok := currentlyLiveYTChannels[cname]; ok {
+		openMPV("youtube", streamURL)
+	} else {
+		openMPV("twitch", cname)
+	}
+
+
+}
 
 func main() {
 	err := godotenv.Load()
@@ -464,81 +530,15 @@ func main() {
 		case 1:
 			checkBoth()
 		case 2:
-			checkYoutubeLive()
+			// checkYoutubeLive()
 		case 3:
-			checkTwitchLive()
+			// checkTwitchLive()
 		case 4:
-			watchTwitchStream()
+			// watchTwitchStream()
 		case 5:
 			os.Exit(0)
 		}
 
 	}
-	// var wg sync.WaitGroup
-	// wg.Add(1)
-	// err := godotenv.Load()
-	// if err != nil {
-	// 	log.Fatal("Error loading API key. Check .env file")
-	// }
-
-	// reply := testTwitch(&wg)
-	// wg.Wait()
-
-	// // fmt.Print(string(reply))
-
-	// var replyDataField twitchChannels
-
-	// err = json.Unmarshal(reply, &replyDataField)
-	// if err != nil {
-	// 	log.Fatal("Error in unmarshalling json data", err)
-	// }
-
-	// // fmt.Print(replyDataField.Data)
-
-	
-	// for _, channel := range replyDataField.Data {
-	// 	if channel.BroadcasterLogin == "k4sen" {
-	// 		fmt.Print(channel)
-	// 	}
-	// }
-
-
-
-
-	// ytApiKey := os.Getenv("ytApiKey")
-	// fmt.Printf("%s\n", ytApiKey)
-
-	// channels := openChannels()
-	// for _, pair := range channels {
-	// 	fmt.Printf("%s, %s\n", pair[0], pair[1])
-	// }
-
-	// cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=uHZ3Qy2taIk")
-	// cmd.Start()
-
-	
-
-	// var choice int
-	// for choice != 4 {
-	// 	fmt.Println("1.Add Channel.\n2.Check who is live.\n3.Watch Stream\n4.Exit")
-	// 	fmt.Scanln(&choice)
-
-	// 	switch choice {
-	// 	case 1:
-	// 		addChannel()
-	// 	case 2:
-	// 		checkLive()
-	// 	case 3:
-	// 		watchStream()
-	// 	case 4:
-	// 		os.Exit(0)
-	// 	}
-
-	// }
-	
-	
-
-	
-
 	
 }
