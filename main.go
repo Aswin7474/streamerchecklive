@@ -77,8 +77,7 @@ func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sy
 	ctx := context.Background()
 	service, err := youtube.NewService(ctx, option.WithAPIKey(ytApiKey))
 	if err != nil {
-		// log.Fatalf("Error creating YouTube service: %v", err)
-		log.Printf("Error creating YouTube service: %v", err)
+		log.Fatalf("Error creating YouTube service: %v", err)
 	}
 
 	// Search for live videos from a specific channel
@@ -96,20 +95,9 @@ func makeYTCall(ChannelName string, channelID string, wg *sync.WaitGroup, mu *sy
 	// Print live video results
 	
 	for _, item := range response.Items {
-		// fmt.Println("Live Videos from the Channel:")
-		// fmt.Printf("Channel: %s, Title: %s, URL: https://www.youtube.com/watch?v=%s\n",
-		// 	ChannelName, item.Snippet.Title, item.Id.VideoId)
-			 results <- map[string]string{ChannelName: item.Id.VideoId}
-			 return
-
+		results <- map[string]string{ChannelName: item.Id.VideoId}
+		return
 	}
-	
-	
-
-	if len(response.Items) == 0 {
-		// fmt.Printf("%s is not live.\n", ChannelName)
-	}
-
 }
 
 func clearConsole() {
@@ -122,22 +110,6 @@ func clearConsole() {
 
 	cmd.Stdout = os.Stdout
 	cmd.Run()
-}
-
-func watchChannelMap(channelMap map[string]string) {
-	var cname string
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print("Who would you like to watch: ")
-
-	if scanner.Scan() {
-		cname = scanner.Text()
-	}
-
-	cmd := exec.Command("mpv", "https://www.youtube.com/watch?v=" + channelMap[cname])
-	cmd.Start()
-	clearConsole()
-
-	fmt.Println("MPV Loading...")
 }
 
 func resolveChannelIDtoStreamLink(ChannelName string, channelID string) string {
@@ -189,31 +161,7 @@ func watchChannelArray(channels [][]string) {
 	fmt.Println("MPV Loading...")
 }
 
-func appendCSV(ChannelName string, cID string) {
-	file, err := os.OpenFile("channels.csv", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
-	if err != nil {
-		log.Fatal("Couldn't open file to write.")
-	}
-
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-
-	newRecord := []string{ChannelName, cID}
-
-	if err := writer.Write(newRecord); err != nil {
-		fmt.Println("Something went wrong in writing to csv", err)
-		return
-	}
-
-	writer.Flush()
-
-	if err := writer.Error(); err != nil {
-		fmt.Println("Something went wrong flushing the writer", err)
-	}
-}
-
-func addChannel() ([]string, error){
+func addYoutube(){
 	var cname string
 	ytApiKey := os.Getenv("ytApiKey")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -241,14 +189,30 @@ func addChannel() ([]string, error){
 
 	var ytResponse YouTubeResponse
 	if err := json.Unmarshal(body, &ytResponse); err != nil {
-		return []string{}, err
+		log.Fatal(err)
 	}
 
-	if len(ytResponse.Items) > 0 {
-		appendCSV(cname,  ytResponse.Items[0].ID.ChannelID)
+	if len(ytResponse.Items) == 0 {
+		log.Fatal("channel not found")
 	}
 
-	return []string{}, fmt.Errorf("channel not found")
+	file, err := os.OpenFile("channels.csv", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
+		log.Fatal("Error writing to csv.",err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+ 	defer writer.Flush()
+
+	data := []string{cname,"youtube",ytResponse.Items[0].ID.ChannelID}
+	
+	err = writer.Write(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Succesfully added %s.\n", cname)
 }
 
 func openYTChannels() [][]string {
@@ -272,8 +236,6 @@ func openYTChannels() [][]string {
 }
 
 func checkYoutubeLive(channels [][]string) map[string]string{
-	// channels := openYTChannels()
-
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	results := make(chan map[string]string, len(channels))
@@ -292,67 +254,11 @@ func checkYoutubeLive(channels [][]string) map[string]string{
 	
 	for result := range results {
 		for key, value := range result {
-			// fmt.Printf("%s = %s\n", finalResults[key], value)
 			finalResults[key] = value
 		}
 	}
 
 	return finalResults
-
-	// fmt.Println("Available Channels:")
-
-	// for key, _ := range finalResults {
-	// 	fmt.Println(key)
-	// }
-
-	// watchChannelMap(finalResults)
-
-}
-
-func watchStream() {
-	file, err := os.Open("channels.csv")
-
-	if err != nil {
-		log.Fatal("Couldn't open file", err)
-	}
-
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		log.Fatal("Couldn't read the entries", err)
-	}
-
-	for _, channel := range records {
-		fmt.Println(channel[0])
-	}
-
-	watchChannelArray(records)
-}
-
-func openTwitchChannels() [][]string {
-	file, err := os.Open("twitchchannels.csv")
-
-	if err != nil {
-		log.Fatal("Couldn't open file", err)
-	}
-
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		log.Fatal("Couldn't read the entries", err)
-	}
-
-	// for _, record := range records {
-	// 	fmt.Print(record[0])
-	// }
-	return records
-
 }
 
 func parseTwitchChannelData(ChannelName string, unparsedData []byte) (twitchChannel, bool) {
@@ -429,24 +335,6 @@ func checkTwitchLive(channels []string) {
 
 }
 
-func watchTwitchStream() {
-	var cname string
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print("Who would you like to watch: ")
-
-	if scanner.Scan() {
-		cname = scanner.Text()
-	}
-
-	cmd := exec.Command("mpv", "https://twitch.tv/" + cname)
-	cmd.Start()
-	clearConsole()
-
-	fmt.Println("MPV Loading...")
-
-
-}
-
 func openMPV(platform string, streamURL string) {
 	switch platform {
 	case "youtube":
@@ -494,8 +382,9 @@ func checkBoth() {
 	checkTwitchLive(twitchArray)
 
 	fmt.Println("On Youtube: ")
-	for key, value := range currentlyLiveYTChannels {
-		fmt.Printf("%s = %s\n", key, value)
+	for key, _ := range currentlyLiveYTChannels {
+		// fmt.Printf("%s = %s\n", key, value)
+		fmt.Printf("%s\n", key)
 	}
 
 	fmt.Println("Who would you like to watch: ")
@@ -515,6 +404,120 @@ func checkBoth() {
 
 }
 
+func onlyYoutube() {
+	file, err := os.Open("channels.csv")
+
+	if err != nil {
+		log.Fatal("Couldn't open file", err)
+	}
+
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatal("Couldn't read the entries", err)
+	}
+
+	var ytDoubleArray [][]string
+
+	for _, channel := range records {
+		if channel[2] == "" {
+			// twitchArray = append(twitchArray, channel[0])
+		} else {
+			ytDoubleArray = append(ytDoubleArray, channel)
+		}
+	}
+
+	currentlyLiveYTChannels := checkYoutubeLive(ytDoubleArray)
+
+	fmt.Println("On Youtube: ")
+	for key, _ := range currentlyLiveYTChannels {
+		fmt.Printf("%s\n", key)
+	}
+
+	fmt.Println("Who would you like to watch: ")
+	var cname string
+	scanner := bufio.NewScanner(os.Stdin)
+
+	if scanner.Scan() {
+		cname = scanner.Text()
+	}
+
+	if streamURL, ok := currentlyLiveYTChannels[cname]; ok {
+		openMPV("youtube", streamURL)
+	} else {
+		fmt.Println("Error in giving streamer name.")
+	}
+}
+
+func onlyTwitch() {
+	file, err := os.Open("channels.csv")
+
+	if err != nil {
+		log.Fatal("Couldn't open file", err)
+	}
+
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatal("Couldn't read the entries", err)
+	}
+
+	var twitchArray []string
+
+	for _, channel := range records {
+		if channel[2] == "" {
+			twitchArray = append(twitchArray, channel[0])
+		}
+	}
+
+	fmt.Println("On Twitch: ")
+	checkTwitchLive(twitchArray)
+
+	fmt.Println("Who would you like to watch: ")
+	var cname string
+	scanner := bufio.NewScanner(os.Stdin)
+
+	if scanner.Scan() {
+		cname = scanner.Text()
+	}
+
+	openMPV("twitch", cname)
+}
+
+func addTwitch() {
+	file, err := os.OpenFile("channels.csv", os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
+		log.Fatal("Error writing to csv.",err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+ 	defer writer.Flush()
+
+	 fmt.Println("Who would you like to add: ")
+	 var cname string
+	 scanner := bufio.NewScanner(os.Stdin)
+ 
+	 if scanner.Scan() {
+		 cname = scanner.Text()
+	 }
+
+	data := []string{cname,"twitch",""}
+	
+	err = writer.Write(data)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Succesfully added %s.\n", cname)
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -523,19 +526,21 @@ func main() {
 
 	var choice int
 	for choice != 4 {
-		fmt.Println("1.Check Youtube and Twitch.\n2.Check Youtube.\n3.Check Twitch.\n4.Watch stream.\n5.Exit")
+		fmt.Println("1.Check Youtube and Twitch.\n2.Check Youtube.\n3.Check Twitch.\n4.Add Twitch Channel.\n5.Add Youtube Channel.\n6.Exit.")
 		fmt.Scanln(&choice)
 
 		switch choice {
 		case 1:
 			checkBoth()
 		case 2:
-			// checkYoutubeLive()
+			onlyYoutube()
 		case 3:
-			// checkTwitchLive()
+			onlyTwitch()
 		case 4:
-			// watchTwitchStream()
+			addTwitch()
 		case 5:
+			addYoutube()
+		case 6:
 			os.Exit(0)
 		}
 
